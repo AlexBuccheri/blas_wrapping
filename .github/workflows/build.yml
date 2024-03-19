@@ -10,29 +10,48 @@ env:
   HOMEBREW_NO_INSTALL_CLEANUP: "ON"
 
 jobs:
+  mac-build:
+    name: macOS Build
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        version: [13]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Install GCC
+        run: |
+          brew install gcc@${{ matrix.version }} openblas pkg-config
+          ln -s /usr/local/bin/gfortran-${{ matrix.version }} /usr/local/bin/gfortran
+          ln -s /usr/local/bin/gcc-${{ matrix.version }} /usr/local/bin/gcc
+          ln -s /usr/local/bin/g++-${{ matrix.version }} /usr/local/bin/g++
+          echo "PKG_CONFIG_PATH=/usr/local/opt/openblas/lib/pkgconfig" >> $GITHUB_ENV
+          xcversion select 14.1
+
+      - name: Set Compiler
+        run: |
+          echo "FC=gfortran-${{ matrix.version }}" >> $GITHUB_ENV
+          echo "CC=gcc-${{ matrix.version }}" >> $GITHUB_ENV
+          echo "CXX=g++-${{ matrix.version }}" >> $GITHUB_ENV
+
+      - name: Build project
+        run: gfortran blas_interface_test.f90 -lopenblas -o test.x
+
   gcc-build:
+    name: Linux Build
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
-        version: [10]  # Extend to 11, 12, 13
+        os: [ubuntu-latest]
+        version: [10, 11, 12, 13]
 
     steps:
     - name: Checkout code
       uses: actions/checkout@v3
 
-    - name: Install GCC (OSX)
-      if: ${{ contains(matrix.os, 'macos') }}
-      run: |
-        brew install gcc@${{ matrix.version }} openblas pkg-config
-        ln -s /usr/local/bin/gfortran-${{ matrix.version }} /usr/local/bin/gfortran
-        ln -s /usr/local/bin/gcc-${{ matrix.version }} /usr/local/bin/gcc
-        ln -s /usr/local/bin/g++-${{ matrix.version }} /usr/local/bin/g++
-        echo "PKG_CONFIG_PATH=/usr/local/opt/openblas/lib/pkgconfig" >> $GITHUB_ENV
-        xcversion select 14.1
-
-    - name: Install GCC (Linux)
-      if: ${{ contains(matrix.os, 'ubuntu') }}
+    - name: Install GCC
       run: |
         sudo add-apt-repository ppa:ubuntu-toolchain-r/test
         sudo apt-get update
@@ -44,63 +63,50 @@ jobs:
           --slave /usr/bin/g++ g++ /usr/bin/g++-${{ matrix.version }} \
           --slave /usr/bin/gcov gcov /usr/bin/gcov-${{ matrix.version }}
 
-    - name: Set Compiler (Linux)
-      if: contains(matrix.os, 'ubuntu')
+    - name: Set Compiler
       run: |
         echo "FC=gfortran" >> $GITHUB_ENV
         echo "CC=gcc" >> $GITHUB_ENV
         echo "CXX=g++" >> $GITHUB_ENV
 
-    - name: Set Compiler (OSX)
-      if: contains(matrix.os, 'macos')
-      run: |
-        echo "FC=gfortran-${{ matrix.version }}" >> $GITHUB_ENV
-        echo "CC=gcc-${{ matrix.version }}" >> $GITHUB_ENV
-        echo "CXX=g++-${{ matrix.version }}" >> $GITHUB_ENV
-
-    - name: Build project (Linux)
+    - name: Build project
       run: gfortran blas_interface_test.f90 -lblas -llapack -o test.x
 
-    - name: Build project (Mac)
-      run: gfortran blas_interface_test.f90 -lopenblas -o test.x
+  intel-build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        fc: [ifx]
+        cc: [icx]
+    env:
+      FC: ${{ matrix.fc }}
+      CC: ${{ matrix.cc }}
+      APT_PACKAGES: >-
+        intel-oneapi-compiler-fortran
+        intel-oneapi-compiler-dpcpp-cpp
+        intel-oneapi-mkl
+        intel-oneapi-mkl-devel
 
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
 
-#  intel-build:
-#    runs-on: ${{ matrix.os }}
-#    strategy:
-#      fail-fast: false
-#      matrix:
-#        os: [ubuntu-latest]
-#        fc: [ifx]
-#        cc: [icx]
-#    env:
-#      FC: ${{ matrix.fc }}
-#      CC: ${{ matrix.cc }}
-#      APT_PACKAGES: >-
-#        intel-oneapi-compiler-fortran
-#        intel-oneapi-compiler-dpcpp-cpp
-#        intel-oneapi-mkl
-#        intel-oneapi-mkl-devel
-#
-#    steps:
-#    - name: Checkout code
-#      uses: actions/checkout@v3
-#
-#    - name: Add Intel repository
-#      if: contains(matrix.os, 'ubuntu')
-#      run: |
-#        wget -O- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB | gpg --dearmor | sudo tee /usr/share/keyrings/oneapi-archive-keyring.gpg > /dev/null
-#        echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" | sudo tee /etc/apt/sources.list.d/oneAPI.list
-#        sudo apt-get update
-#
-#    - name: Install Intel oneAPI compiler
-#      if: contains(matrix.os, 'ubuntu')
-#      run: |
-#        sudo apt-get update
-#        sudo apt-get install ${APT_PACKAGES}
-#        source /opt/intel/oneapi/setvars.sh
-#        printenv >> $GITHUB_ENV
+    - name: Add Intel repository
+      if: contains(matrix.os, 'ubuntu')
+      run: |
+        wget -O- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB | gpg --dearmor | sudo tee /usr/share/keyrings/oneapi-archive-keyring.gpg > /dev/null
+        echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" | sudo tee /etc/apt/sources.list.d/oneAPI.list
+        sudo apt-get update
 
-    # TODO(Alex) Link to MKL
-#    - name: Build project
-#      run: ifx blas_interface_test.f90 -lblas -llapack -o test.x
+    - name: Install Intel oneAPI compiler
+      if: contains(matrix.os, 'ubuntu')
+      run: |
+        sudo apt-get update
+        sudo apt-get install ${APT_PACKAGES}
+        source /opt/intel/oneapi/setvars.sh
+        printenv >> $GITHUB_ENV
+
+    - name: Build project
+      run: ifx -i8 -qmkl-ilp64=parallel blas_interface_test.f90 -o test.x
